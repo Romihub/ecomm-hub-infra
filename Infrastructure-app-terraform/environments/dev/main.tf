@@ -164,8 +164,8 @@ module "postgresql" {
   subnet_id           = module.network.db_subnet_id
   private_dns_zone_id = module.network.postgres_dns_zone_id
 
-  admin_username = "admin"
-  admin_password = "admin123" # Should be stored in Key Vault in practice
+  admin_username = "myuser"
+  admin_password = "!rdmyWatgcg14" # Should be stored in Key Vault in practice
 
   database_name = "ecommerce"
   storage_mb    = 32768
