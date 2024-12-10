@@ -1,57 +1,78 @@
 pipeline {
     agent any
     
+    parameters {
+        choice(name: 'ACTION', choices: ['apply', 'destroy'], description: 'Select Terraform action')
+    }
+    
     environment {
         TERRAFORM_DIR = 'Infrastructure-app-terraform/environments/dev'
-        AZURE_CREDS = credentials('azure-cred')
+        AZURE = credentials('aks-cred')
     }
     
     stages {
         stage('Checkout Infrastructure') {
             steps {
-                git url: 'https://github.com/Romihub/ecomm-hub-infra.git',
-                    branch: 'master'
-            }
-        }
-
-        stage('Azure Login') {
-            steps {
-                withCredentials([azureServicePrincipal('azure-cred')]) {
-                    sh '''
-                        az login --service-principal \
-                            --username $AZURE_CLIENT_ID \
-                            --password $AZURE_CLIENT_SECRET \
-                            --tenant $AZURE_TENANT_ID
-                        
-                        az account set --subscription $AZURE_SUBSCRIPTION_ID
-                        
-                        # Verify login
-                        az account show
-                    '''
-                }
+                checkout([$class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/Romihub/ecomm-hub-infra.git',
+                        credentialsId: 'github'
+                    ]]
+                ])
             }
         }
         
-        stage('Terraform Init') {
+        stage('Terraform Operations') {
             steps {
-                dir(TERRAFORM_DIR) {
-                    sh 'terraform init'
-                }
-            }
-        }
-        
-        stage('Terraform Plan') {
-            steps {
-                dir(TERRAFORM_DIR) {
-                    sh 'terraform plan -out=tfplan'
-                }
-            }
-        }
-        
-        stage('Terraform Apply') {
-            steps {
-                dir(TERRAFORM_DIR) {
-                    sh 'terraform apply -auto-approve tfplan'
+                withCredentials([azureServicePrincipal('aks-cred')]) {
+                    dir(TERRAFORM_DIR) {
+                        script {
+                            // Set Azure credentials for all Terraform operations
+                            def azureEnv = """
+                                export ARM_CLIENT_ID=\${AZURE_CLIENT_ID}
+                                export ARM_CLIENT_SECRET=\${AZURE_CLIENT_SECRET}
+                                export ARM_SUBSCRIPTION_ID=\${AZURE_SUBSCRIPTION_ID}
+                                export ARM_TENANT_ID=\${AZURE_TENANT_ID}
+                            """
+                            
+                            // Terraform Init
+                            stage('Terraform Init') {
+                                sh """
+                                    ${azureEnv}
+                                    terraform init
+                                """
+                            }
+                            
+                            if (params.ACTION == 'destroy') {
+                                // Terraform Destroy
+                                stage('Terraform Destroy') {
+                                    sh """
+                                        ${azureEnv}
+                                        terraform plan -destroy -out=tfplan
+                                        terraform apply -auto-approve tfplan
+                                    """
+                                }
+                            } else {
+                                // Terraform Plan
+                                stage('Terraform Plan') {
+                                    sh """
+                                        ${azureEnv}
+                                        terraform plan -out=tfplan
+                                    """
+                                }
+                                
+                                // Terraform Apply
+                                stage('Terraform Apply') {
+                                    //sh """
+                                        //${azureEnv}
+                                        //terraform apply -auto-approve tfplan
+                                    //"""
+                                    sh "ls -lrth"
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -61,7 +82,7 @@ pipeline {
         always {
             sh '''
                 # Logout from Azure
-                az logout
+                #az logout
                 
                 # Clear Azure CLI cache
                 rm -rf ~/.azure
